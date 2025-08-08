@@ -8,8 +8,11 @@ export default function TabLayout() {
 
   // Choose icons based on platform
   const homeIconName = Platform.OS === "ios" ? "home" : "home-outline";
+  const cameraIconName = Platform.OS === "ios" ? "camera" : "camera-outline";
+  const reeIconName =
+    Platform.OS === "ios" ? "chatbox-ellipses" : "chatbox-ellipses-outline";
   const profileIconName =
-    Platform.OS === "ios" ? "paper-plane" : "paper-plane-outline";
+    Platform.OS === "ios" ? "person-circle" : "person-circle-outline";
 
   return (
     <Tabs
@@ -31,6 +34,24 @@ export default function TabLayout() {
           title: "Home",
           tabBarIcon: ({ color }) => (
             <Ionicons size={28} name={homeIconName} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="camera"
+        options={{
+          title: "Camera",
+          tabBarIcon: ({ color }) => (
+            <Ionicons size={28} name={cameraIconName} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="ree"
+        options={{
+          title: "REE",
+          tabBarIcon: ({ color }) => (
+            <Ionicons size={28} name={reeIconName} color={color} />
           ),
         }}
       />
