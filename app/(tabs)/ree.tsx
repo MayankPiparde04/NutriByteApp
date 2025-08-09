@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -18,12 +17,29 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  appendMessageToChat,
+  getChatMessages,
+  StoredMessage,
+} from "../../lib/chatStorage";
+import { useLocalSearchParams } from "expo-router";
 
 export default function REE() {
   const isDark = useColorScheme() === "dark";
   const router = useRouter();
   const [keyboardHeight] = useState(new Animated.Value(0));
   const insets = useSafeAreaInsets();
+
+  const params = useLocalSearchParams();
+  const initialChatId = params.chatId ?? `session-${Date.now()}`;
+  const [chatId, setChatId] = useState(initialChatId);
+
+  useEffect(() => {
+    (async () => {
+      const stored = await getChatMessages(chatId);
+      if (stored.length) setMessages(stored);
+    })();
+  }, [chatId]);
 
   useEffect(() => {
     const showEvent =
@@ -61,6 +77,14 @@ export default function REE() {
     timestamp: number;
   };
 
+  const handleNewChat = async () => {
+    const newId = `session-${Date.now()}`;
+    setChatId(newId);
+    setMessages([]); // clear current UI
+    await clearChat(newId); // optional, makes sure it's empty in storage
+    router.replace(`/ree?chatId=${newId}`);
+  };
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const flatListRef = useRef<FlatList>(null);
@@ -77,8 +101,7 @@ export default function REE() {
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
-
-    const userMsg: Message = {
+    const userMsg: StoredMessage = {
       id: Date.now().toString(),
       text: inputText.trim(),
       fromAI: false,
@@ -87,19 +110,13 @@ export default function REE() {
 
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
+    // persist
+    await appendMessageToChat(chatId, userMsg);
 
-    // Scroll to end after adding user message
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-
+    // get AI response
     const aiMsg = await getAIResponse(userMsg.text!);
     setMessages((prev) => [...prev, aiMsg]);
-
-    // Scroll to end after adding AI message
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    await appendMessageToChat(chatId, aiMsg);
   };
 
   const pickImage = async () => {
@@ -142,33 +159,25 @@ export default function REE() {
   };
 
   const sendImageMessage = async (uri: string) => {
-    const userImgMsg: Message = {
+    const userImgMsg: StoredMessage = {
       id: Date.now().toString(),
       imageUri: uri,
       fromAI: false,
       timestamp: Date.now(),
     };
-
     setMessages((prev) => [...prev, userImgMsg]);
+    await appendMessageToChat(chatId, userImgMsg);
 
-    // Scroll to end after adding user image
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-
+    // simulate analysis
     await new Promise((r) => setTimeout(r, 1500));
-
-    const aiImgMsg: Message = {
+    const aiImgMsg: StoredMessage = {
       id: (Date.now() + 1).toString(),
       text: "AI: I analyzed your image! Here's what I found...",
       fromAI: true,
       timestamp: Date.now() + 1,
     };
-
     setMessages((prev) => [...prev, aiImgMsg]);
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    await appendMessageToChat(chatId, aiImgMsg);
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -179,7 +188,9 @@ export default function REE() {
         <View
           className={`max-w-[80%] rounded-2xl overflow-hidden ${
             isUser
-              ? isDark ? "bg-blue-600" : "bg-blue-500"
+              ? isDark
+                ? "bg-blue-600"
+                : "bg-blue-500"
               : isDark
                 ? "bg-gray-800 border border-gray-700"
                 : "bg-white border border-gray-200"
@@ -248,6 +259,7 @@ export default function REE() {
         }}
       >
         <View className="flex-row items-center justify-between px-4">
+          {/* Back Button */}
           <TouchableOpacity
             onPress={() => {
               try {
@@ -267,6 +279,7 @@ export default function REE() {
             />
           </TouchableOpacity>
 
+          {/* Title + Subtitle */}
           <View className="items-center">
             <Text
               className={`text-2xl font-bold ${
@@ -284,24 +297,42 @@ export default function REE() {
             </Text>
           </View>
 
-          <TouchableOpacity
-            onPress={() => {
-              try {
-                router.push("/(tabs)/profile");
-              } catch (error) {
-                console.log("Navigation error:", error);
-              }
-            }}
-            className={`p-3 rounded-full ${
-              isDark ? "bg-gray-800" : "bg-gray-100"
-            }`}
-          >
-            <Ionicons
-              name="person-circle"
-              size={24}
-              color={isDark ? "#e5e7eb" : "#374151"}
-            />
-          </TouchableOpacity>
+          {/* Actions Row */}
+          <View className="flex-row items-center space-x-3">
+            {/* New Chat Button */}
+            <TouchableOpacity
+              onPress={handleNewChat}
+              className={`p-3 rounded-full ${
+                isDark ? "bg-gray-800" : "bg-gray-100"
+              }`}
+            >
+              <Ionicons
+                name="add"
+                size={24}
+                color={isDark ? "#e5e7eb" : "#374151"}
+              />
+            </TouchableOpacity>
+
+            {/* Profile Button */}
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  router.push("/(tabs)/profile");
+                } catch (error) {
+                  console.log("Navigation error:", error);
+                }
+              }}
+              className={`p-3 rounded-full ${
+                isDark ? "bg-gray-800" : "bg-gray-100"
+              }`}
+            >
+              <Ionicons
+                name="person-circle"
+                size={24}
+                color={isDark ? "#e5e7eb" : "#374151"}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -368,9 +399,10 @@ export default function REE() {
       >
         <Animated.View
           style={{
-            paddingBottom: Platform.OS === "ios" 
-              ? insets.bottom 
-              : Animated.add(keyboardHeight, insets.bottom),
+            paddingBottom:
+              Platform.OS === "ios"
+                ? insets.bottom
+                : Animated.add(keyboardHeight, insets.bottom),
           }}
         >
           <View
@@ -426,7 +458,9 @@ export default function REE() {
                 disabled={!inputText.trim()}
                 className={`p-3 rounded-full ${
                   inputText.trim()
-                    ? isDark ? "bg-blue-600" : "bg-blue-500"
+                    ? isDark
+                      ? "bg-blue-600"
+                      : "bg-blue-500"
                     : isDark
                       ? "bg-gray-700"
                       : "bg-gray-300"
@@ -447,4 +481,3 @@ export default function REE() {
     </View>
   );
 }
-                
