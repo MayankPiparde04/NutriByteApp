@@ -1,7 +1,7 @@
+import { FontAwesome5, MaterialIcons } from "@expo/vector-icons";
 import React from "react";
-import { View, Text, TouchableOpacity, Dimensions } from "react-native";
+import { Dimensions, Text, TouchableOpacity, View } from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -25,7 +25,7 @@ const dummyData = {
 };
 
 export default function Home() {
-  const formatCalories = (cal) =>
+  const formatCalories = (cal: number): string =>
     cal.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
   const chartData = {
@@ -61,7 +61,7 @@ export default function Home() {
       <View className="flex-row justify-between items-center mb-6">
         <View>
           <Text className="text-gray-700 dark:text-gray-300 text-lg font-semibold mb-1">
-            Today's Calories
+            Today&apos;s Calories
           </Text>
           <Text className="text-4xl font-bold text-red-600 dark:text-red-400">
             {formatCalories(dummyData.todayCalories)} kcal

@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   FlatList,
@@ -17,28 +18,60 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../../contexts/AuthContext";
+import { api } from "../../lib/api";
 import {
   appendMessageToChat,
   getChatMessages,
   StoredMessage,
 } from "../../lib/chatStorage";
-import { useLocalSearchParams } from "expo-router";
 
 export default function REE() {
   const isDark = useColorScheme() === "dark";
   const router = useRouter();
+  const { user, isAuthenticated } = useAuth();
   const [keyboardHeight] = useState(new Animated.Value(0));
   const insets = useSafeAreaInsets();
 
   const params = useLocalSearchParams();
-  const initialChatId = params.chatId ?? `session-${Date.now()}`;
-  const [chatId, setChatId] = useState(initialChatId);
+  const initialChatId = Array.isArray(params.chatId) 
+    ? params.chatId[0] 
+    : params.chatId ?? `session-${Date.now()}`;
+  const [chatId, setChatId] = useState<string>(initialChatId);
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
 
+  // Load chat messages on mount
   useEffect(() => {
-    (async () => {
-      const stored = await getChatMessages(chatId);
-      if (stored.length) setMessages(stored);
-    })();
+    const loadMessages = async () => {
+      if (!chatId.startsWith("session-")) {
+        try {
+          // Try to load from backend first
+          const response = await api.getChatMessages(chatId);
+          if (response.success && response.data) {
+            const backendMessages = response.data.messages.map((msg, index) => ({
+              id: msg._id || index.toString(),
+              text: msg.text,
+              imageUri: msg.imageUri,
+              fromAI: msg.fromAI,
+              timestamp: new Date(msg.timestamp).getTime(),
+              senderId: msg.senderId,
+            }));
+            setMessages(backendMessages);
+            return;
+          }
+        } catch (error) {
+          console.warn("Failed to load messages from backend:", error);
+        }
+        
+        // Fallback to local storage
+        const storedMessages = await getChatMessages(chatId);
+        if (storedMessages.length) {
+          setMessages(storedMessages);
+        }
+      }
+    };
+
+    loadMessages();
   }, [chatId]);
 
   useEffect(() => {
@@ -80,8 +113,7 @@ export default function REE() {
   const handleNewChat = async () => {
     const newId = `session-${Date.now()}`;
     setChatId(newId);
-    setMessages([]); // clear current UI
-    await clearChat(newId); // optional, makes sure it's empty in storage
+    setMessages([]);
     router.replace(`/ree?chatId=${newId}`);
   };
 
@@ -90,33 +122,161 @@ export default function REE() {
   const flatListRef = useRef<FlatList>(null);
 
   async function getAIResponse(userText: string): Promise<Message> {
-    await new Promise((r) => setTimeout(r, 1200));
-    return {
-      id: Date.now().toString(),
-      text: `REE: `,
-      fromAI: true,
-      timestamp: Date.now(),
-    };
+    setIsLoadingAI(true);
+    try {
+      const prompt = `As a nutrition AI assistant, provide helpful advice about: ${userText}. 
+      Keep responses concise but informative. Include specific nutritional information when relevant.`;
+
+      const response = await api.generateText(prompt);
+
+      if (response.success && response.data) {
+        return {
+          id: Date.now().toString(),
+          text: response.data.text,
+          fromAI: true,
+          timestamp: Date.now(),
+        };
+      } else {
+        throw new Error(response.error || "Failed to get AI response");
+      }
+    } catch (error) {
+      console.error("AI response error:", error);
+      return {
+        id: Date.now().toString(),
+        text: "Sorry, I'm having trouble processing your request right now. Please try again later.",
+        fromAI: true,
+        timestamp: Date.now(),
+      };
+    } finally {
+      setIsLoadingAI(false);
+    }
+  }
+
+  async function analyzeImage(imageUri: string): Promise<Message> {
+    setIsLoadingAI(true);
+    try {
+      // Convert image to base64
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const analysisResponse = await api.analyzeImage(base64);
+
+      if (analysisResponse.success && analysisResponse.data) {
+        return {
+          id: Date.now().toString(),
+          text: analysisResponse.data.text,
+          fromAI: true,
+          timestamp: Date.now(),
+        };
+      } else {
+        throw new Error(analysisResponse.error || "Failed to analyze image");
+      }
+    } catch (error) {
+      console.error("Image analysis error:", error);
+      return {
+        id: Date.now().toString(),
+        text: "Sorry, I couldn't analyze that image. Please make sure it contains food and try again.",
+        fromAI: true,
+        timestamp: Date.now(),
+      };
+    } finally {
+      setIsLoadingAI(false);
+    }
   }
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
-    const userMsg: StoredMessage = {
+    if (!inputText.trim() || !user) return;
+
+    const userMessage = {
+      text: inputText.trim(),
+      fromAI: false,
+      senderId: user.id,
+    };
+
+    // Create a local message for immediate UI update
+    const localUserMsg: StoredMessage = {
       id: Date.now().toString(),
       text: inputText.trim(),
       fromAI: false,
       timestamp: Date.now(),
+      senderId: user.id,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, localUserMsg]);
     setInputText("");
-    // persist
-    await appendMessageToChat(chatId, userMsg);
 
-    // get AI response
-    const aiMsg = await getAIResponse(userMsg.text!);
-    setMessages((prev) => [...prev, aiMsg]);
-    await appendMessageToChat(chatId, aiMsg);
+    try {
+      // Send message to backend
+      const response = await api.addMessage({
+        chatId: chatId.startsWith("session-") ? undefined : chatId,
+        ...userMessage,
+      });
+
+      if (response.success && response.data) {
+        // Update chatId if it's a new chat
+        if (chatId.startsWith("session-") && response.data._id) {
+          setChatId(response.data._id);
+        }
+
+        // Get AI response
+        const aiResponse = await api.generateText(userMessage.text);
+        
+        if (aiResponse.success && aiResponse.data) {
+          const aiMessage = {
+            chatId: response.data._id,
+            text: aiResponse.data.text,
+            fromAI: true,
+            senderId: null,
+          };
+
+          // Add AI message to backend
+          const aiBackendResponse = await api.addMessage(aiMessage);
+
+          // Create local AI message for UI
+          const localAiMsg: StoredMessage = {
+            id: (Date.now() + 1).toString(),
+            text: aiResponse.data.text,
+            fromAI: true,
+            timestamp: Date.now(),
+            senderId: undefined,
+          };
+
+          setMessages((prev) => [...prev, localAiMsg]);
+        }
+      } else {
+        // Fallback to local storage if backend fails
+        console.warn("Backend failed, using local storage");
+        const result = await appendMessageToChat(chatId, localUserMsg);
+        if (result?.chatId && result.chatId !== chatId) {
+          setChatId(result.chatId);
+        }
+
+        // Get AI response using fallback
+        const aiMsg = await getAIResponse(userMessage.text);
+        setMessages((prev) => [...prev, aiMsg]);
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      // Fallback to local storage
+      try {
+        const result = await appendMessageToChat(chatId, localUserMsg);
+        if (result?.chatId && result.chatId !== chatId) {
+          setChatId(result.chatId);
+        }
+        const aiMsg = await getAIResponse(userMessage.text);
+        setMessages((prev) => [...prev, aiMsg]);
+      } catch (fallbackError) {
+        console.error("Fallback also failed:", fallbackError);
+        Alert.alert("Error", "Failed to send message. Please try again.");
+      }
+    }
   };
 
   const pickImage = async () => {
@@ -159,25 +319,94 @@ export default function REE() {
   };
 
   const sendImageMessage = async (uri: string) => {
-    const userImgMsg: StoredMessage = {
+    if (!user) return;
+
+    // Convert image to base64
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const base64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+
+    const userImageMessage = {
+      imageUri: base64,
+      fromAI: false,
+      senderId: user.id,
+    };
+
+    // Create local message for immediate UI update
+    const localUserImgMsg: StoredMessage = {
       id: Date.now().toString(),
-      imageUri: uri,
+      imageUri: uri, // Use original URI for display
       fromAI: false,
       timestamp: Date.now(),
+      senderId: user.id,
     };
-    setMessages((prev) => [...prev, userImgMsg]);
-    await appendMessageToChat(chatId, userImgMsg);
 
-    // simulate analysis
-    await new Promise((r) => setTimeout(r, 1500));
-    const aiImgMsg: StoredMessage = {
-      id: (Date.now() + 1).toString(),
-      text: "AI: I analyzed your image! Here's what I found...",
-      fromAI: true,
-      timestamp: Date.now() + 1,
-    };
-    setMessages((prev) => [...prev, aiImgMsg]);
-    await appendMessageToChat(chatId, aiImgMsg);
+    setMessages((prev) => [...prev, localUserImgMsg]);
+
+    try {
+      // Send image message to backend
+      const imageResponse = await api.addMessage({
+        chatId: chatId.startsWith("session-") ? undefined : chatId,
+        ...userImageMessage,
+      });
+
+      if (imageResponse.success && imageResponse.data) {
+        // Update chatId if it's a new chat
+        if (chatId.startsWith("session-") && imageResponse.data._id) {
+          setChatId(imageResponse.data._id);
+        }
+
+        // Analyze image with AI
+        const analysisResponse = await api.analyzeImage(base64);
+        
+        if (analysisResponse.success && analysisResponse.data) {
+          const aiMessage = {
+            chatId: imageResponse.data._id,
+            text: analysisResponse.data.text,
+            fromAI: true,
+            senderId: null,
+          };
+
+          // Add AI analysis to backend
+          await api.addMessage(aiMessage);
+
+          // Create local AI message for UI
+          const localAiMsg: StoredMessage = {
+            id: (Date.now() + 1).toString(),
+            text: analysisResponse.data.text,
+            fromAI: true,
+            timestamp: Date.now(),
+            senderId: undefined,
+          };
+
+          setMessages((prev) => [...prev, localAiMsg]);
+        }
+      } else {
+        // Fallback to local storage and analysis
+        console.warn("Backend failed for image, using local storage");
+        const result = await appendMessageToChat(chatId, localUserImgMsg);
+        if (result?.chatId) setChatId(result.chatId);
+
+        const aiImgMsg = await analyzeImage(uri);
+        setMessages((prev) => [...prev, aiImgMsg]);
+      }
+    } catch (error) {
+      console.error("Error sending image message:", error);
+      // Fallback to local storage
+      try {
+        const result = await appendMessageToChat(chatId, localUserImgMsg);
+        if (result?.chatId) setChatId(result.chatId);
+        const aiImgMsg = await analyzeImage(uri);
+        setMessages((prev) => [...prev, aiImgMsg]);
+      } catch (fallbackError) {
+        console.error("Image fallback also failed:", fallbackError);
+        Alert.alert("Error", "Failed to send image. Please try again.");
+      }
+    }
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -242,6 +471,15 @@ export default function REE() {
     );
   };
 
+  if (!isAuthenticated) {
+    return (
+      <View className="flex-1 justify-center items-center">
+        <ActivityIndicator size="large" />
+        <Text className="mt-2">Loading...</Text>
+      </View>
+    );
+  }
+
   return (
     <View
       style={{ flex: 1, paddingTop: insets.top }}
@@ -263,7 +501,7 @@ export default function REE() {
           <TouchableOpacity
             onPress={() => {
               try {
-                router.back();
+                router.push("/(tabs)");
               } catch (error) {
                 console.log("Navigation error:", error);
               }
@@ -390,6 +628,31 @@ export default function REE() {
             }}
           />
         )}
+
+        {/* AI Loading Indicator */}
+        {isLoadingAI && (
+          <View className="flex-row items-center justify-start px-4 mb-4">
+            <View
+              className={`p-4 rounded-2xl ${
+                isDark ? "bg-gray-800" : "bg-white"
+              }`}
+            >
+              <View className="flex-row items-center">
+                <ActivityIndicator
+                  size="small"
+                  color={isDark ? "#6b7280" : "#9ca3af"}
+                />
+                <Text
+                  className={`ml-2 ${
+                    isDark ? "text-gray-400" : "text-gray-500"
+                  }`}
+                >
+                  AI is thinking...
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Input area */}
@@ -419,7 +682,14 @@ export default function REE() {
               {/* Camera button */}
               <TouchableOpacity
                 onPress={takePhoto}
-                className={`p-3 rounded-full ${isDark ? "bg-green-600" : "bg-green-500"}`}
+                disabled={isLoadingAI}
+                className={`p-3 rounded-full ${
+                  isLoadingAI
+                    ? "bg-gray-400"
+                    : isDark
+                      ? "bg-green-600"
+                      : "bg-green-500"
+                }`}
               >
                 <Ionicons name="camera" size={24} color="white" />
               </TouchableOpacity>
@@ -427,7 +697,14 @@ export default function REE() {
               {/* Gallery button */}
               <TouchableOpacity
                 onPress={pickImage}
-                className={`p-3 rounded-full ${isDark ? "bg-purple-600" : "bg-purple-500"}`}
+                disabled={isLoadingAI}
+                className={`p-3 rounded-full ${
+                  isLoadingAI
+                    ? "bg-gray-400"
+                    : isDark
+                      ? "bg-purple-600"
+                      : "bg-purple-500"
+                }`}
               >
                 <Ionicons name="image" size={24} color="white" />
               </TouchableOpacity>
@@ -446,6 +723,7 @@ export default function REE() {
                   onChangeText={setInputText}
                   multiline
                   maxLength={1000}
+                  editable={!isLoadingAI}
                   style={{
                     maxHeight: 100,
                   }}
@@ -455,9 +733,9 @@ export default function REE() {
               {/* Send button */}
               <TouchableOpacity
                 onPress={sendMessage}
-                disabled={!inputText.trim()}
+                disabled={!inputText.trim() || isLoadingAI}
                 className={`p-3 rounded-full ${
-                  inputText.trim()
+                  inputText.trim() && !isLoadingAI
                     ? isDark
                       ? "bg-blue-600"
                       : "bg-blue-500"
@@ -470,7 +748,11 @@ export default function REE() {
                   name="send"
                   size={20}
                   color={
-                    inputText.trim() ? "white" : isDark ? "#6b7280" : "#9ca3af"
+                    inputText.trim() && !isLoadingAI
+                      ? "white"
+                      : isDark
+                        ? "#6b7280"
+                        : "#9ca3af"
                   }
                 />
               </TouchableOpacity>

@@ -1,20 +1,25 @@
+import { useAuth } from "@/contexts/AuthContext";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   useColorScheme,
-  ScrollView,
+  View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 
 export default function Register() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const router = useRouter();
+  const { register, isLoading } = useAuth();
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -33,14 +38,14 @@ export default function Register() {
   const validateFullName = (text: string) => text.trim().length >= 3;
 
   const validateEmail = (text: string) => {
-    const regex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    const regex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
     return regex.test(text);
   };
 
   const validatePassword = (text: string) => text.length >= 6;
 
   const validatePhone = (text: string) => {
-    const regex = /^[0-9]{10,15}$/;
+    const regex = /^\d{10,15}$/;
     return regex.test(text);
   };
 
@@ -93,7 +98,7 @@ export default function Register() {
     password &&
     phone;
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!isFormValid) {
       Alert.alert(
         "Validation Error",
@@ -101,19 +106,53 @@ export default function Register() {
       );
       return;
     }
-    Alert.alert("Success", "Registered successfully!");
-    // Connect with backend API here
+
+    // Prevent multiple submissions
+    if (isLoading) {
+      console.log("Registration already in progress");
+      return;
+    }
+    
+    try {
+      console.log("Starting registration process...");
+      
+      const result = await register({
+        fullname: fullName,
+        email,
+        password,
+        phone,
+      });
+      
+      if (result.success) {
+        Alert.alert("Success", "Registered successfully!", [
+          {
+            text: "OK",
+            onPress: () => router.replace("/(tabs)")
+          }
+        ]);
+      } else {
+        console.error("Registration failed:", result.error);
+        Alert.alert("Registration Failed", result.error || "An error occurred during registration");
+      }
+    } catch (err) {
+      console.error("Registration error:", err);
+      Alert.alert("Registration Failed", "Network error. Please check your internet connection and try again.");
+    }
   };
 
   return (
-    <ScrollView
-      contentContainerStyle={{ flexGrow: 1 }}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      style={
-        isDark ? { backgroundColor: "#030712" } : { backgroundColor: "#fff" }
-      }
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
     >
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={
+          isDark ? { backgroundColor: "#030712" } : { backgroundColor: "#fff" }
+        }
+      >
       <View className="flex-1 px-8">
         <View className="flex-1 justify-center">
           <Text
@@ -255,15 +294,26 @@ export default function Register() {
 
           {/* Register Button */}
           <TouchableOpacity
-            disabled={!isFormValid}
+            disabled={!isFormValid || isLoading}
             onPress={handleRegister}
+            accessibilityRole="button"
+            accessibilityLabel="Register"
             className={`rounded-md py-4 ${
-              isFormValid ? "bg-green-700" : "bg-green-300"
+              isFormValid && !isLoading ? "bg-green-700" : "bg-green-300"
             } mb-4`}
           >
-            <Text className="text-white text-center text-lg font-semibold">
-              Register
-            </Text>
+            {isLoading ? (
+              <View className="flex-row items-center justify-center">
+                <ActivityIndicator color="white" size="small" />
+                <Text className="text-white text-center text-lg font-semibold ml-2">
+                  Registering...
+                </Text>
+              </View>
+            ) : (
+              <Text className="text-white text-center text-lg font-semibold">
+                Register
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* Already have account button */}
@@ -278,6 +328,7 @@ export default function Register() {
                 router.push("/login");
               }}
               accessibilityRole="button"
+              accessibilityLabel="Go to Login"
             >
               <Text
                 className={`text-sm font-medium ${
@@ -291,5 +342,6 @@ export default function Register() {
         </View>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

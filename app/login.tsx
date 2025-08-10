@@ -1,20 +1,25 @@
+import { useAuth } from "@/contexts/AuthContext";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   useColorScheme,
-  ScrollView,
+  View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 
 export default function Login() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const router = useRouter();
+  const { login, isLoading } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +29,7 @@ export default function Login() {
   const [passwordError, setPasswordError] = useState("");
 
   const validateEmail = (text: string) => {
-    const regex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    const regex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
     return regex.test(text);
   };
 
@@ -44,25 +49,40 @@ export default function Login() {
     );
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (emailError || passwordError || !email || !password) {
       Alert.alert("Validation Error", "Please correct the errors to continue.");
       return;
     }
-    Alert.alert("Success", "Logged in successfully!");
+    
+    try {
+      const result = await login(email, password);
+      if (result.success) {
+        router.replace("/(tabs)");
+      } else {
+        Alert.alert("Login Failed", result.error || "An error occurred during login");
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      Alert.alert("Login Failed", "An unexpected error occurred");
+    }
   };
 
   const isFormValid = !emailError && !passwordError && email && password;
 
   return (
-    <ScrollView
-      contentContainerStyle={{ flexGrow: 1 }}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      style={
-        isDark ? { backgroundColor: "#030712" } : { backgroundColor: "#fff" }
-      }
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
     >
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={
+          isDark ? { backgroundColor: "#030712" } : { backgroundColor: "#fff" }
+        }
+      >
       <View className="flex-1 px-8">
         <View className="flex-1 justify-center">
           <Text
@@ -169,15 +189,21 @@ export default function Login() {
 
           {/* Login Button */}
           <TouchableOpacity
-            disabled={!isFormValid}
+            disabled={!isFormValid || isLoading}
             onPress={handleLogin}
+            accessibilityRole="button"
+            accessibilityLabel="Login"
             className={`rounded-md py-4 ${
-              isFormValid ? "bg-blue-700" : "bg-blue-300"
+              isFormValid && !isLoading ? "bg-blue-700" : "bg-blue-300"
             }`}
           >
-            <Text className="text-white text-center text-lg font-semibold">
-              Login
-            </Text>
+            {isLoading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white text-center text-lg font-semibold">
+                Login
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* New to NutriByte Button */}
@@ -192,6 +218,7 @@ export default function Login() {
                 router.push("/register");
               }}
               accessibilityRole="button"
+              accessibilityLabel="Go to Register"
             >
               <Text
                 className={`text-sm font-medium ${
@@ -205,5 +232,6 @@ export default function Login() {
         </View>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
