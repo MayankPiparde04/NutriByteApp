@@ -2,7 +2,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { getOptimalBackendUrl } from '../utils/networkDetection';
 
 // Dynamic API URL based on platform and environment
 const getApiBaseUrl = () => {

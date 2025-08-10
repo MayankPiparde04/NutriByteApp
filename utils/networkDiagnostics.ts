@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { performDetailedHealthCheck, getNetworkInfo } from '../utils/networkDetection';
+import { getNetworkInfo, performDetailedHealthCheck } from '../utils/networkDetection';
 
 // This is a simple test script to validate network detection
 // Can be called from anywhere in the app for debugging

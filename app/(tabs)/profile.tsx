@@ -2,21 +2,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  useColorScheme,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    useColorScheme,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { HealthCheckButton } from "../../components/HealthCheckButton";
 import { useAuth } from "../../contexts/AuthContext";
 import { findWorkingBaseUrl } from "../../utils/healthCheck";
-import { HealthCheckButton } from "../../components/HealthCheckButton";
 
 export default function Profile() {
   const isDark = useColorScheme() === "dark";
